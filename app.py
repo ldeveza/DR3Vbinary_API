@@ -1,6 +1,7 @@
 import io
 import numpy as np
 import os
+import json
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
@@ -53,6 +54,77 @@ app.add_middleware(
 @app.get("/health")
 async def health_check():
     return {"status": "ok"}
+
+@app.get("/model-check")
+async def model_check():
+    """Diagnostic endpoint to check if model files exist and can be loaded"""
+    # Check if model files exist
+    model_files = check_model_files()
+    
+    # Try to load the model if all files exist
+    if all(file_info.get("exists", False) for file_info in model_files["files"].values()):
+        try:
+            tf = get_tf()
+            model = get_model()
+            model_loading = {
+                "success": True,
+                "message": "Model loaded successfully",
+                "model_input_names": list(model.structured_input_signature[1].keys())
+            }
+        except Exception as e:
+            import traceback
+            model_loading = {
+                "success": False,
+                "message": str(e),
+                "traceback": traceback.format_exc()
+            }
+    else:
+        model_loading = {
+            "success": False,
+            "message": "Not attempted - missing model files"
+        }
+    
+    return {
+        "model_files": model_files,
+        "model_loading": model_loading
+    }
+
+def check_model_files():
+    """Check if all model files exist and report their sizes"""
+    model_dir = MODEL_PATH
+    
+    required_files = [
+        'saved_model.pb',
+        'variables/variables.index',
+        'variables/variables.data-00000-of-00001'
+    ]
+    
+    results = {
+        "model_directory_exists": os.path.exists(model_dir),
+        "model_directory_path": model_dir,
+        "files": {}
+    }
+    
+    if not results["model_directory_exists"]:
+        return results
+    
+    # Check each required file
+    for file_path in required_files:
+        full_path = os.path.join(model_dir, file_path)
+        file_exists = os.path.exists(full_path)
+        
+        file_info = {
+            "exists": file_exists,
+            "path": full_path
+        }
+        
+        if file_exists:
+            file_info["size_bytes"] = os.path.getsize(full_path)
+            file_info["size_mb"] = round(file_info["size_bytes"] / (1024 * 1024), 2)
+        
+        results["files"][file_path] = file_info
+    
+    return results
 
 def preprocess_image(file: UploadFile):
     try:
